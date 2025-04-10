@@ -130,7 +130,7 @@ public class SlideDrop : NoteLongDrop
             star_slide.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
 
             var lastScroll = timeProvider.GetPositionAtTime(time + LastFor) - timeProvider.GetPositionAtTime(time);
-            var process = (lastScroll - timing) / LastFor;
+            var process = (lastScroll - timing) / lastScroll;
             process = 1f - process;
             var realPro = (LastFor - realtime) / LastFor;
             realPro = 1f - realPro;
@@ -138,7 +138,7 @@ public class SlideDrop : NoteLongDrop
             {
                 process = realPro;
             }
-            if (process > 1)
+            if (realPro > 1)
             {
                 foreach (GameObject obj in slideBars)
                 {
@@ -157,7 +157,7 @@ public class SlideDrop : NoteLongDrop
                         else
                             GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().slideCount++;
                     }
-                    slideOK.SetActive(true);
+                    if(!isMine) slideOK.SetActive(true);
                 }
                 else
                 {

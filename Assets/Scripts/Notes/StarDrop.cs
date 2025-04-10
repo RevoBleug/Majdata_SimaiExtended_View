@@ -165,7 +165,7 @@ public class StarDrop : NoteDrop
         {
             if (!isNoHead)
             {
-                GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>().PlayEffect(startPosition, isBreak);
+                if(!isMine) GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>().PlayEffect(startPosition, isBreak);
                 if (isMine) ObjectCounter.mineCount++;
                 else if (isBreak) ObjectCounter.breakCount++;
                 else if (isMine) ObjectCounter.mineCount++;

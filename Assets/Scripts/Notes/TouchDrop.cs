@@ -133,7 +133,7 @@ public class TouchDrop : NoteDrop
         {
             SetfanColor(new Color(1f, 1f, 1f, 0f));
         }
-        if (realtime > 0f) justEffect.SetActive(true);
+        if (realtime > 0f && !isMine) justEffect.SetActive(true);
 
         if (-timing <= wholeDuration && -timing > moveDuration)
         {

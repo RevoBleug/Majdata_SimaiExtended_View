@@ -146,7 +146,7 @@ public class HoldDrop : NoteLongDrop
         }
         if (holdReal > 0)
         {
-            GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>().PlayEffect(startPosition, isBreak);
+            if(!isMine) GameObject.Find("NoteEffects").GetComponent<NoteEffectManager>().PlayEffect(startPosition, isBreak);
             if (isMine)
                 GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().mineCount++;
             else if (isBreak)
@@ -180,7 +180,7 @@ public class HoldDrop : NoteLongDrop
                 holdEndRender.enabled = false;
                 holdDistance = 1.225f;
                 distance = 4.8f;
-                holdEffect.SetActive(true);
+                if(!isMine) holdEffect.SetActive(true);
                 startHoldShine();
             }
             else if (holdDistance < 1.225f && distance < 4.8f) // 头未到达 尾未出现
@@ -190,7 +190,7 @@ public class HoldDrop : NoteLongDrop
             else if (holdDistance >= 1.225f && distance >= 4.8f && realDistance >= 4.8f) // 头到达 尾出现
             {
                 distance = 4.8f;
-                holdEffect.SetActive(true);
+                if (!isMine) holdEffect.SetActive(true);
                 startHoldShine();
 
                 holdEndRender.enabled = true;
