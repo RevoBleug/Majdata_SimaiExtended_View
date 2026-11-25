@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class HoldDrop : NoteLongDrop
 {
@@ -107,19 +107,32 @@ public class HoldDrop : NoteLongDrop
     // Update is called once per frame
     private void Update()
     {
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
-        var distance = timing * speed + 4.8f;
-        var realDistance = realtime * speed + 4.8f;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
+        var distance = timing * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
+        var realDistance = realtime * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
         if(!canSVAffect)
         {
             timing = realtime;
             distance = realDistance;
         }
+
+        // 判定中（realtime 在 [0, LastFor] 之间）头端必须压在判定圈上（4.8 就是 realtime=0 的位置）。
+        // 负 SV 回退会把整条推离判定圈，一旦两端都跑掉，画面上就看不到"正在按住"的那一端了。
+        // canSVAffect=false 的 hold 本来就不跟 SV 走，保持原来的穿过表现。
+        var judging = canSVAffect && realtime >= 0f && realtime <= LastFor;
+        if (judging) distance = 4.8f;
+
         var destScale = distance * 0.4f + 0.51f;
         if (destScale < 0f)
         {
+            // 越过判定圈很远（负 SV / 回退）时必须隐藏，否则长条会停在最后的可见位置一直不动
             destScale = 0f;
+            spriteRenderer.forceRenderingOff = true;
+            exSpriteRender.forceRenderingOff = true;
+            holdEndRender.enabled = false;
+            if (tapLine != null) tapLine.SetActive(false);
+            if (holdEffect != null) holdEffect.SetActive(false);
             return;
         }
 
@@ -135,10 +148,13 @@ public class HoldDrop : NoteLongDrop
 
         spriteRenderer.size = new Vector2(1.22f, 1.4f);
 
-        var holdTime = timing - timeProvider.GetPositionAtTime(time + LastFor) + timeProvider.GetPositionAtTime(time);
+        // 尾巴位置 == 组曲线在"现在"和"尾巴时刻"的位置差。
+        // 直接用组曲线的当前位置（不再从 timing 绕），组内 hold 才不会被主谱面的 SV 带偏。
+        var holdTime = (float)(timeProvider.GetScrollDistD(svGroup)
+                               - timeProvider.GetPositionAtTimeD(time + LastFor, svGroup));
         var holdReal = realtime - LastFor;
-        var holdDistance = holdTime * speed + 4.8f;
-        var holdRealDistance = holdReal * speed + 4.8f;
+        var holdDistance = holdTime * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
+        var holdRealDistance = holdReal * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
         if (!canSVAffect)
         {
             holdTime = holdReal;
@@ -171,11 +187,21 @@ public class HoldDrop : NoteLongDrop
             var pos = getPositionFromDistance(distance);
             transform.position = pos;
 
-            if (destScale > 0.3f) tapLine.SetActive(true);
         }
         else
         {
-            if (holdDistance < 1.225f && distance >= 4.8f && realDistance >= 4.8f) // 头到达 尾未出现
+            if (judging)
+            {
+                // 判定中：只有头端钉在判定圈上，尾巴照 SV 算出来的位置走（所以会随 SV 上下动）。
+                // 但尾巴不能画到音符生成位置之外：1.225 是所有下落脚本共用的"音符最远边界"
+                // （distance < 1.225 就钳住），再往外只会拉出一条超出可见范围的长条。
+                distance = 4.8f;
+                if (holdDistance < 1.225f) holdDistance = 1.225f;
+                if (!isMine) holdEffect.SetActive(true);
+                startHoldShine();
+                holdEndRender.enabled = true;
+            }
+            else if (holdDistance < 1.225f && distance >= 4.8f && realDistance >= 4.8f) // 头到达 尾未出现
             {
                 holdEndRender.enabled = false;
                 holdDistance = 1.225f;
@@ -200,17 +226,28 @@ public class HoldDrop : NoteLongDrop
                 holdEndRender.enabled = true;
             }
 
-            var dis = (distance - holdDistance) / 2 + holdDistance;
-            transform.position = getPositionFromDistance(dis); //0.325
-            var size = distance - holdDistance + 1.4f;
+            // 负 SV / 回退段会让尾巴"超过"头。判定中尾巴可以跑到头的更外侧，
+            // 也可以缩到判定圈内侧，都按两端实际跨度渲染；
+            // 非判定中仍把尾巴压回头上，避免长度算成负数翻转。
+            if (!judging && holdDistance > distance) holdDistance = distance;
+
+            var top = Mathf.Max(distance, holdDistance);
+            var bottom = Mathf.Min(distance, holdDistance);
+            var size = top - bottom + 1.4f;
+            transform.position = getPositionFromDistance((top + bottom) * 0.5f); //0.325
             spriteRenderer.size = new Vector2(1.22f, size);
-            holdEndRender.transform.localPosition = new Vector3(0f, 0.6825f - size / 2);
+            // 尾端标记跟着"离判定圈更远"的那一端走
+            var tailOffset = size / 2 - 0.6825f;
+            holdEndRender.transform.localPosition = new Vector3(0f, holdDistance >= distance ? tailOffset : -tailOffset);
             transform.localScale = new Vector3(1f, 1f);
         }
 
         var lineScale = Mathf.Abs(distance / 4.8f);
         lineScale = lineScale >= 1f ? 1f : lineScale;
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
+        // 同 TapDrop：线的显隐每帧统一判断，避免负 SV 回弹跨帧时停在关闭状态
+        // 线是从判定圈中心连到音符的，远处也要显示（靠 localScale 拉长），只按"是否退到太内侧"判断
+        if (tapLine != null) tapLine.SetActive(destScale > 0.3f);
         exSpriteRender.size = spriteRenderer.size;
         //lineSpriteRender.color = new Color(1f, 1f, 1f, lineScale);
     }

@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Net.NetworkInformation;
 using UnityEngine;
 
@@ -97,10 +97,10 @@ public class TapDrop : NoteDrop
     // Update is called once per frame
     private void Update()
     {
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
-        var distance = timing * speed + 4.8f;
-        var realDistance = realtime * speed + 4.8f;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
+        var distance = timing * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
+        var realDistance = realtime * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
         if(!canSVAffect)
         {
             timing = realtime;
@@ -111,6 +111,7 @@ public class TapDrop : NoteDrop
         {
             destScale = 0f;
             tapLine.SetActive(false);
+            spriteRenderer.forceRenderingOff = true;
             return;
         }
 
@@ -147,7 +148,6 @@ public class TapDrop : NoteDrop
             distance = 1.225f;
             var pos = getPositionFromDistance(distance);
             transform.position = pos;
-            if (destScale > 0.3f) tapLine.SetActive(true);
         }
         else
         {
@@ -158,6 +158,12 @@ public class TapDrop : NoteDrop
 
         var lineScale = Mathf.Abs(distance / 4.8f);
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
+        // 线的显隐必须每帧统一判断：
+        // 负 SV 回弹时 distance 可能一帧就从判定圈内侧跨到外面，跳过上面的 <1.225 分支，
+        // 而 SetActive(true) 只写在那分支里，line 就会一直停在上一次的关闭状态（表现为时有时无）。
+        // 注意：线是从判定圈中心连到音符的，远处也要显示（靠 localScale 拉长），
+        // 所以这里不能加 distance 条件，只按"音符是否退到太内侧"判断。
+        tapLine.SetActive(destScale > 0.3f);
         //lineSpriteRender.color = new Color(1f, 1f, 1f, lineScale);
     }
 

@@ -16,9 +16,23 @@ internal class SimaiTimingPoint
     public float currentBpm;
     public bool havePlayed;
     public float HSpeed = 1.0f;
+    public float Scale = 1.0f; // SC：谱面整体缩放
+    public float ScaleTransition; // SC 渐变时长（秒）
     public string noteContent;
     public List<SimaiNote> noteList = new();
     public float SVeloc = 1.0f;
+    public float SVTransition; // SV 渐变时长（秒）
+    // <SV*-1:0#4:1> 的显式起始值：给出时渐变从 SVStart 开始，而不是从"当前值"接着变
+    public bool hasSVStart;
+    public float SVStart;
+    public bool hasScaleStart;
+    public float ScaleStart;
+    // <GR*x> 插入的组编号，0 = 主谱面。组内音符的 SV/SC 只查自己这条曲线
+    public int groupIndex;
+    // 组插入点的时间（组内时间点都带，用来对齐组曲线和主谱面的位置基准）
+    public double groupStartTime;
+    public float groupInitSV = 1f; // 组曲线的初始 SV（组内一律从 1 起，不继承主谱面）
+    public float groupInitScale = 1f; // 组曲线的初始 SC（组内一律从 1 起，不继承主谱面）
     public int rawTextPositionX;
     public int rawTextPositionY;
     public double time;

@@ -50,6 +50,12 @@ public class CustomSkin : MonoBehaviour
     public Sprite[] TouchBorder_Each = new Sprite[2];
     public Sprite[] TouchBorder_Mine = new Sprite[2];
 
+    // break touch 专用（运行时由 normal 贴图换色相生成，皮肤目录里不需要额外文件）
+    public Sprite Touch_Break;
+    public Sprite TouchPoint_Break;
+    public Sprite[] TouchBorder_Break = new Sprite[2];
+    public Sprite TouchJust_Break;
+
     public Sprite[] TouchHold = new Sprite[5];
     public Sprite[] TouchHold_Mine = new Sprite[5];
 
@@ -134,7 +140,55 @@ public class CustomSkin : MonoBehaviour
         }
         TouchHold[4] = SpriteLoader.LoadSpriteFromFile(path + "/touchhold_border.png");
         TouchHold_Mine[4] = SpriteLoader.LoadSpriteFromFile(path + "/touchhold_border_mine.png");
+
+        // break touch：touch 贴图本身是蓝色的，而 SpriteRenderer.color 是乘算，
+        // 乘上橙色只会变暗、变不出来橙色。所以直接换掉贴图的色相，生成一套橙色贴图。
+        Touch_Break = RecolorHue(Touch, BreakHue);
+        TouchPoint_Break = RecolorHue(TouchPoint, BreakHue);
+        TouchBorder_Break[0] = RecolorHue(TouchBorder[0], BreakHue);
+        TouchBorder_Break[1] = RecolorHue(TouchBorder[1], BreakHue);
+        TouchJust_Break = RecolorHue(TouchJust, BreakHue);
+
         Debug.Log(test);
+    }
+
+    private const float BreakHue = 0.09f; // 约 32°，和 tap_break 的橙色一致
+
+    /// <summary>
+    ///     把贴图里有颜色的像素的色相换成 targetHue（0~1），饱和度/明度保持不变；黑白灰不动。
+    ///     读不到像素时退回原贴图。
+    /// </summary>
+    private static Sprite RecolorHue(Sprite src, float targetHue)
+    {
+        if (src == null || src.texture == null) return src;
+        var tex = src.texture;
+        if (!tex.isReadable) return src;
+
+        var rect = src.rect;
+        var w = (int)rect.width;
+        var h = (int)rect.height;
+        if (w <= 0 || h <= 0) return src;
+
+        var px = tex.GetPixels((int)rect.x, (int)rect.y, w, h);
+        for (var i = 0; i < px.Length; i++)
+        {
+            var c = px[i];
+            if (c.a <= 0.001f) continue;
+            Color.RGBToHSV(c, out _, out var s, out var v);
+            if (s <= 0.05f) continue; // 黑白灰不染色
+            var tinted = Color.HSVToRGB(targetHue, s, v);
+            tinted.a = c.a;
+            px[i] = tinted;
+        }
+
+        var nt = new Texture2D(w, h, TextureFormat.RGBA32, false);
+        nt.SetPixels(px);
+        nt.Apply();
+        nt.filterMode = tex.filterMode;
+        nt.wrapMode = tex.wrapMode;
+
+        return Sprite.Create(nt, new Rect(0, 0, w, h),
+            new Vector2(src.pivot.x / rect.width, src.pivot.y / rect.height), src.pixelsPerUnit);
     }
 
     // Update is called once per frame

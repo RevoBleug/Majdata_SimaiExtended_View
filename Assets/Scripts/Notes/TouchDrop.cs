@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class TouchDrop : NoteDrop
 {
@@ -8,6 +8,8 @@ public class TouchDrop : NoteDrop
     public bool isEach;
     public bool isFirework;
     public bool isMine;
+    public bool isBreak;
+    public Color breakColor = new Color(1f, 0.63f, 0.19f); // break touch 的橙色
     public bool canSVAffect;
 
     public int startPosition;
@@ -21,16 +23,20 @@ public class TouchDrop : NoteDrop
     public Sprite fanNormalSprite;
     public Sprite fanEachSprite;
     public Sprite fanMineSprite;
+    public Sprite fanBreakSprite; // 橙色版本，由皮肤在加载时换色相生成
 
     public Sprite pointNormalSprite;
     public Sprite pointEachSprite;
     public Sprite pointMineSprite;
+    public Sprite pointBreakSprite;
 
     public Sprite justSprite;
+    public Sprite justBreakSprite;
 
     public Sprite[] multTouchNormalSprite = new Sprite[2];
     public Sprite[] multTouchMineSprite = new Sprite[2];
     public Sprite[] multTouchEachSprite = new Sprite[2];
+    public Sprite[] multTouchBreakSprite = new Sprite[2];
 
     public GameObject[] fans;
     private readonly SpriteRenderer[] fansSprite = new SpriteRenderer[7];
@@ -74,6 +80,14 @@ public class TouchDrop : NoteDrop
             fansSprite[5].sprite = multTouchMineSprite[0];
             fansSprite[6].sprite = multTouchMineSprite[1];
         }
+        else if (isBreak)
+        {
+            // break touch 用的是换过色相的橙色贴图，不再靠 color 相乘（蓝 × 橙只会变暗）
+            SetfanSprite(fanBreakSprite != null ? fanBreakSprite : fanNormalSprite);
+            fansSprite[4].sprite = pointBreakSprite != null ? pointBreakSprite : pointNormalSprite;
+            fansSprite[5].sprite = multTouchBreakSprite[0] != null ? multTouchBreakSprite[0] : multTouchNormalSprite[0];
+            fansSprite[6].sprite = multTouchBreakSprite[1] != null ? multTouchBreakSprite[1] : multTouchNormalSprite[1];
+        }
         else if (isEach)
         {
             SetfanSprite(fanEachSprite);
@@ -89,7 +103,8 @@ public class TouchDrop : NoteDrop
             fansSprite[6].sprite = multTouchNormalSprite[1];
         }
 
-        justEffect.GetComponent<SpriteRenderer>().sprite = justSprite;
+        justEffect.GetComponent<SpriteRenderer>().sprite =
+            isBreak && justBreakSprite != null ? justBreakSprite : justSprite;
 
         transform.position = GetAreaPos(startPosition, areaPosition);
         justEffect.SetActive(false);
@@ -99,9 +114,11 @@ public class TouchDrop : NoteDrop
     // Update is called once per frame
     private void Update()
     {
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
-        var fakeMove = timeProvider.GetPositionAtTime(time + moveDuration) - timeProvider.GetPositionAtTime(time);
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
+        var fakeMove = timeProvider.GetPositionAtTime(time + moveDuration, svGroup) - timeProvider.GetPositionAtTime(time, svGroup);
+        // SV 为 0 的段落会让 fakeMove 变成 0，后面除法会得到 Infinity/NaN，touch 直接不显示。
+        if (fakeMove <= 0.0001f) fakeMove = moveDuration;
 
         //var timing = time;
         //var pow = Mathf.Pow(-timing * speed, 0.1f)-0.4f;
@@ -118,8 +135,9 @@ public class TouchDrop : NoteDrop
         if (realtime > 0.05f)
         {
             multTouchHandler.cancelTouch(this);
-            Instantiate(tapEffect, transform.position, transform.rotation);
+            if(!isMine) Instantiate(tapEffect, transform.position, transform.rotation);
             if(isMine) GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().mineCount++;
+            else if (isBreak) GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().breakCount++;
             else GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().touchCount++;
             if (isFirework)
             {
@@ -162,9 +180,12 @@ public class TouchDrop : NoteDrop
         }
 
         if (float.IsNaN(distance)) distance = 0f;
+        // SC：touch 的位置固定在判定区、不跟着缩放，但"收缩"的行程要跟 SC 走——
+        // 缩放变小时扇形张开的幅度也跟着变小，观感上就是收缩变慢。
+        var scaledDistance = distance * timeProvider.GetScaleFor(svGroup);
         for (var i = 0; i < 4; i++)
         {
-            var pos = (0.226f + distance) * GetAngle(i);
+            var pos = (0.226f + scaledDistance) * GetAngle(i);
             fans[i].transform.localPosition = pos;
         }
     }
@@ -239,6 +260,8 @@ public class TouchDrop : NoteDrop
 
     private void SetfanColor(Color color)
     {
+        // break touch 没有专属贴图，用橙色着色；alpha 仍交给渐入渐出控制
+        if (isBreak) color = new Color(breakColor.r, breakColor.g, breakColor.b, color.a);
         foreach (var fan in fansSprite) fan.color = color;
     }
 

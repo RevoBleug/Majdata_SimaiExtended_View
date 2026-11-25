@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class StarDrop : NoteDrop
 {
@@ -130,10 +130,10 @@ public class StarDrop : NoteDrop
     // Update is called once per frame
     private void Update()
     {
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
-        var distance = timing * speed + 4.8f;
-        var realDistance = realtime * speed + 4.8f;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
+        var distance = timing * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
+        var realDistance = realtime * speed * timeProvider.GetScaleFor(svGroup) + 4.8f;
         if (!canSVAffect)
         {
             timing = realtime;
@@ -144,6 +144,10 @@ public class StarDrop : NoteDrop
         if (destScale < 0f)
         {
             destScale = 0f;
+            tapLine.SetActive(false);
+            spriteRenderer.forceRenderingOff = true;
+            if (exSpriteRender != null) exSpriteRender.forceRenderingOff = true;
+            if (slide != null) slide.SetActive(false);
             return;
         }
 
@@ -188,7 +192,6 @@ public class StarDrop : NoteDrop
             distance = 1.225f;
             var pos = getPositionFromDistance(distance);
             transform.position = pos;
-            if (destScale > 0.3f && !isNoHead) tapLine.SetActive(true);
         }
         else
         {
@@ -200,6 +203,9 @@ public class StarDrop : NoteDrop
 
         var lineScale = Mathf.Abs(distance / 4.8f);
         tapLine.transform.localScale = new Vector3(lineScale, lineScale, 1f);
+        // 同 TapDrop：线的显隐每帧统一判断，避免负 SV 回弹跨帧时停在关闭状态
+        // 线是从判定圈中心连到音符的，远处也要显示（靠 localScale 拉长），只按"是否退到太内侧"判断
+        tapLine.SetActive(destScale > 0.3f && !isNoHead);
         //lineSpriteRender.color = new Color(1f, 1f, 1f, lineScale);
     }
 

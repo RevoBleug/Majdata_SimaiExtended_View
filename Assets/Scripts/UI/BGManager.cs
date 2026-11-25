@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.IO;
 using UnityEngine;
 using UnityEngine.UI;
@@ -32,7 +32,7 @@ public class BGManager : MonoBehaviour
     private void Update()
     {
         //videoPlayer.externalReferenceTime = provider.AudioTime;
-        var delta = (float)videoPlayer.clockTime - provider.AudioTime;
+        var delta = (float)(videoPlayer.clockTime - provider.AudioTime);
         smoothRDelta += (Time.unscaledDeltaTime - smoothRDelta) * 0.01f;
         if (provider.AudioTime < 0) return;
         var realSpeed = Time.deltaTime / smoothRDelta;

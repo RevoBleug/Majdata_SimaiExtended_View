@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json;
@@ -39,6 +39,27 @@ public class JsonDataLoader : MonoBehaviour
 
     private int slideLayer = -10000;
     private int noteSortOrder = 0;
+
+    // 延迟生成：待生成队列（按时间升序）与提前量
+    private const float SPAWN_LOOKAHEAD_SECONDS = 8f; // 按真实时间提前多少秒生成
+    private const float SPAWN_LOOKAHEAD_POSITION = 2f; // 按"滚动位置"提前多少（负 SV 回退时靠这个）
+    private const int SPAWN_SCAN_LIMIT = 2000; // 每帧最多检查多少个待生成项
+
+    private readonly List<SimaiTimingPoint> pendingTimings = new();
+    private readonly List<float> pendingPositions = new(); // 与 pendingTimings 一一对应：该音符的滚动位置
+    private bool positionsReady;
+    private double pendingLastNoteTime;
+
+    // 生成过的项不从 List 里删（RemoveAt 每次都要搬动后面所有元素，
+    // 上万个时间点会变成 O(n²) 的内存搬移），只置 null 并前进读指针。
+    private int pendingCursor;
+    private int pendingRemaining;
+
+    /// <summary>谱面最后一个音符的结束时间（秒）。延迟生成后不能靠场景里的对象统计，改由加载时算好</summary>
+    public float ChartLength { get; private set; }
+
+    /// <summary>是否还有未生成的音符</summary>
+    public bool HasPendingNotes => pendingRemaining > 0;
 
     private static readonly Dictionary<SimaiNoteType, int> NOTE_LAYER_COUNT = new Dictionary<SimaiNoteType, int>()
     {
@@ -153,6 +174,67 @@ public class JsonDataLoader : MonoBehaviour
     // Update is called once per frame
     private void Update()
     {
+        SpawnPendingTimings();
+    }
+
+    /// <summary>
+    ///     每帧把接近播放位置的音符补生成出来；每帧限量，避免集中生成造成卡顿。
+    ///     判断"接近"用的是滚动位置（ScrollDist）而不是真实时间：
+    ///     负 SV 会把谱面往回拉，很后面的音符也可能被拉进屏幕，
+    ///     只按真实时间（8 秒）判断的话这些音符根本还没实例化，屏幕上就什么都看不到。
+    /// </summary>
+    private void SpawnPendingTimings()
+    {
+        if (pendingRemaining <= 0 || timeProvider == null || !timeProvider.isStart) return;
+
+        if (!positionsReady)
+        {
+            // SV 时间轴已经建好（CalcSVPos），把待生成音符的位置一次性算好，之后每帧只做比较
+            pendingPositions.Clear();
+            for (var i = 0; i < pendingTimings.Count; i++)
+                pendingPositions.Add(timeProvider.GetPositionAtTime(pendingTimings[i].time,
+                    pendingTimings[i].groupIndex));
+            positionsReady = true;
+        }
+
+        var spawned = 0;
+        var scanned = 0;
+        for (var i = pendingCursor; i < pendingTimings.Count && spawned < 40; i++)
+        {
+            if (++scanned > SPAWN_SCAN_LIMIT) break;
+
+            var next = pendingTimings[i];
+            if (next == null) continue; // 这一项已经生成过了
+
+            var timeDelta = next.time - timeProvider.AudioTime;
+
+            // 已经过去太久的（卡顿/时间跳变）不补生成，否则会瞬间堆一堆立刻自毁的对象
+            if (timeDelta < -2f)
+            {
+                pendingTimings[i] = null;
+                pendingPositions[i] = 0f;
+                pendingRemaining--;
+                continue;
+            }
+
+            // 组内音符的"当前滚动位置"要用组曲线自己的，不能拿主谱面的 ScrollDist 去比，
+            // 否则主谱面的 SV 波动会让组内音符一会儿被判定成"太远"、一会儿被判定成"太近"
+            var scrollBase = next.groupIndex <= 0
+                ? timeProvider.ScrollDist
+                : timeProvider.GetPositionAtTime(timeProvider.AudioTime, next.groupIndex);
+            var posDelta = pendingPositions[i] - scrollBase;
+            if (timeDelta > SPAWN_LOOKAHEAD_SECONDS && posDelta > SPAWN_LOOKAHEAD_POSITION) continue;
+
+            pendingTimings[i] = null;
+            pendingPositions[i] = 0f;
+            pendingRemaining--;
+
+            // 读指针只跳过已经生成的项，后面还没到的项保持不动
+            while (pendingCursor < pendingTimings.Count && pendingTimings[pendingCursor] == null) pendingCursor++;
+
+            SpawnTiming(next, pendingLastNoteTime);
+            spawned++;
+        }
     }
 
     public void LoadJson(string json, float ignoreOffset)
@@ -168,16 +250,74 @@ public class JsonDataLoader : MonoBehaviour
 
         CountNoteSum(loadedData);
 
+        // 重新加载谱面时必须清掉上一次残留的 SV 表，
+        // 否则新旧 SV 记录会叠加，CalcSVPos 建出来的分段函数整段错位（hold/滑条长度会乱）。
+        // 组曲线也一起清（主谱面 + 每个 <GR*x> 各一条）。
+        timeProvider.ClearCurves();
+
+        // 谱面总时长：按数据算，不依赖已经实例化了多少音符
+        ChartLength = 0f;
+        foreach (var timing in loadedData.timingList)
+        {
+            if ((float)timing.time > ChartLength) ChartLength = (float)timing.time;
+            foreach (var note in timing.noteList)
+            {
+                var endTime = note.noteType == SimaiNoteType.Slide
+                    ? note.slideStartTime + note.slideTime
+                    : timing.time + note.holdTime;
+                if ((float)endTime > ChartLength) ChartLength = (float)endTime;
+            }
+        }
+
         var lastNoteTime = loadedData.timingList.Last().time;
+        pendingTimings.Clear();
+        pendingPositions.Clear();
+        positionsReady = false;
+        pendingLastNoteTime = lastNoteTime;
+        pendingCursor = 0;
+        pendingRemaining = 0;
 
         foreach (var timing in loadedData.timingList)
             try
             {
-                if (timeProvider.SVList.Count == 0 || timeProvider.SVList[timeProvider.SVList.Count - 1] != timing.SVeloc)
+                // 组内的时间点走组自己的曲线，主谱面走主曲线——两边的 SV/SC 互不影响
+                var curve = timeProvider.GetCurve(timing.groupIndex);
+
+                // 组的起点是插入点（组开头可能是空拍），显式记下来，组曲线要靠它对齐主谱面的位置
+                if (timing.groupIndex > 0 && !curve.hasExplicitStart)
                 {
-                    timeProvider.SVList.Add(timing.SVeloc);
-                    UnityEngine.Debug.Log(timing.SVeloc);
-                    timeProvider.SVTime.Add((float)timing.time);
+                    curve.startT = timing.groupStartTime;
+                    // 组的初始 SV/SC 是插入点继承来的值：组内第一条指令若是渐变，
+                    // 起点必须是这个值，不能拿第一条指令的目标值当起点
+                    curve.startSV = timing.groupInitSV;
+                    curve.startScale = timing.groupInitScale;
+                    curve.hasExplicitStart = true;
+                }
+
+                // SV：值变化、或者带渐变时都要记录（渐变可能终止于相同的值，不能只按值去重）
+                if (curve.SVList.Count == 0
+                    || curve.SVList[curve.SVList.Count - 1] != timing.SVeloc
+                    || timing.SVTransition > 0f
+                    || timing.hasSVStart)
+                {
+                    curve.SVList.Add(timing.SVeloc);
+                    curve.SVTime.Add(timing.time); // 必须 double：float 会把相邻的极短 SV 段压成同一时刻
+                    curve.SVTrans.Add(timing.SVTransition);
+                    curve.SVStartVal.Add(timing.SVStart);
+                    curve.SVHasStart.Add(timing.hasSVStart);
+                }
+
+                // SC：谱面整体缩放，同样是"变化或渐变"才记
+                if (curve.ScaleList.Count == 0
+                    || curve.ScaleList[curve.ScaleList.Count - 1] != timing.Scale
+                    || timing.ScaleTransition > 0f
+                    || timing.hasScaleStart)
+                {
+                    curve.ScaleList.Add(timing.Scale);
+                    curve.ScaleTime.Add(timing.time);
+                    curve.ScaleTrans.Add(timing.ScaleTransition);
+                    curve.ScaleStartVal.Add(timing.ScaleStart);
+                    curve.ScaleHasStart.Add(timing.hasScaleStart);
                 }
                 if (timing.time < ignoreOffset)
                 {
@@ -185,184 +325,225 @@ public class JsonDataLoader : MonoBehaviour
                     continue;
                 }
 
-                for (var i = 0; i < timing.noteList.Count; i++)
+                // 离当前播放位置还很远的音符先排队，等接近了再实例化
+                if (timing.time - timeProvider.AudioTime > SPAWN_LOOKAHEAD_SECONDS)
                 {
-                    var note = timing.noteList[i];
-                    if (note.noteType == SimaiNoteType.Tap)
-                    {
-                        var GOnote = Instantiate(tapPrefab, notes.transform);
-                        var NDCompo = GOnote.GetComponent<TapDrop>();
-
-                        // note的图层顺序
-                        NDCompo.noteSortOrder = noteSortOrder;
-                        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
-
-                        if (note.isForceStar)
-                        {
-                            NDCompo.normalSpr = customSkin.Star;
-                            NDCompo.eachSpr = customSkin.Star_Each;
-                            NDCompo.breakSpr = customSkin.Star_Break;
-                            NDCompo.exSpr = customSkin.Star_Ex;
-                            NDCompo.mineSpr = customSkin.Star_Mine;
-                            NDCompo.tapLine = starLine;
-                            NDCompo.isFakeStarRotate = note.isFakeRotate;
-                        }
-                        else
-                        {
-                            //自定义note样式
-                            NDCompo.normalSpr = customSkin.Tap;
-                            NDCompo.breakSpr = customSkin.Tap_Break;
-                            NDCompo.eachSpr = customSkin.Tap_Each;
-                            NDCompo.exSpr = customSkin.Tap_Ex;
-                            NDCompo.mineSpr = customSkin.Tap_Mine;
-                        }
-
-                        NDCompo.BreakShine = BreakShine;
-
-                        if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
-                        NDCompo.isBreak = note.isBreak;
-                        NDCompo.isEX = note.isEx;
-                        NDCompo.isMine = note.isMine;
-                        NDCompo.canSVAffect = note.canSVAffect;
-                        NDCompo.time = (float)timing.time;
-                        NDCompo.startPosition = note.startPosition;
-                        NDCompo.speed = noteSpeed * timing.HSpeed;
-                    }
-
-                    if (note.noteType == SimaiNoteType.Hold)
-                    {
-                        var GOnote = Instantiate(holdPrefab, notes.transform);
-                        var NDCompo = GOnote.GetComponent<HoldDrop>();
-
-                        // note的图层顺序
-                        NDCompo.noteSortOrder = noteSortOrder;
-                        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
-
-                        NDCompo.tapSpr = customSkin.Hold;
-                        NDCompo.eachSpr = customSkin.Hold_Each;
-                        NDCompo.exSpr = customSkin.Hold_Ex;
-                        NDCompo.breakSpr = customSkin.Hold_Break;
-                        NDCompo.mineSpr = customSkin.Hold_Mine;
-
-                        NDCompo.HoldShine = HoldShine;
-                        NDCompo.BreakShine = BreakShine;
-
-                        if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
-                        NDCompo.time = (float)timing.time;
-                        NDCompo.LastFor = (float)note.holdTime;
-                        NDCompo.startPosition = note.startPosition;
-                        NDCompo.speed = noteSpeed * timing.HSpeed;
-                        NDCompo.isEX = note.isEx;
-                        NDCompo.isBreak = note.isBreak;
-                        NDCompo.isMine = note.isMine;
-                        NDCompo.canSVAffect = note.canSVAffect;
-                    }
-
-                    if (note.noteType == SimaiNoteType.TouchHold)
-                    {
-                        var GOnote = Instantiate(touchHoldPrefab, notes.transform);
-                        var NDCompo = GOnote.GetComponent<TouchHoldDrop>();
-
-                        // note的图层顺序
-                        NDCompo.noteSortOrder = noteSortOrder;
-                        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
-
-                        if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
-                        NDCompo.time = (float)timing.time;
-                        NDCompo.LastFor = (float)note.holdTime;
-                        NDCompo.speed = touchSpeed * timing.HSpeed;
-                        NDCompo.isFirework = note.isHanabi;
-                        NDCompo.isMine = note.isMine;
-
-                        Array.Copy(customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
-                        Array.Copy(customSkin.TouchHold_Mine, NDCompo.TouchHoldMineSprite, 5);
-                        NDCompo.TouchPointSprite = customSkin.TouchPoint;
-                        NDCompo.TouchPointMineSprite = customSkin.TouchPoint_Mine;
-                        NDCompo.TouchPointEachSprite = customSkin.TouchPoint_Each;
-                        NDCompo.canSVAffect = note.canSVAffect;
-                    }
-
-                    if (note.noteType == SimaiNoteType.Touch)
-                    {
-                        var GOnote = Instantiate(touchPrefab, notes.transform);
-                        var NDCompo = GOnote.GetComponent<TouchDrop>();
-
-                        // note的图层顺序
-                        NDCompo.noteSortOrder = noteSortOrder;
-                        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
-
-                        NDCompo.time = (float)timing.time;
-                        NDCompo.areaPosition = note.touchArea;
-                        NDCompo.startPosition = note.startPosition;
-
-                        NDCompo.fanNormalSprite = customSkin.Touch;
-                        NDCompo.fanEachSprite = customSkin.Touch_Each;
-                        NDCompo.fanMineSprite = customSkin.Touch_Mine;
-                        NDCompo.pointNormalSprite = customSkin.TouchPoint;
-                        NDCompo.pointEachSprite = customSkin.TouchPoint_Each;
-                        NDCompo.pointMineSprite = customSkin.TouchPoint_Mine;
-                        NDCompo.justSprite = customSkin.TouchJust;
-                        Array.Copy(customSkin.TouchBorder, NDCompo.multTouchNormalSprite, 2);
-                        Array.Copy(customSkin.TouchBorder_Each, NDCompo.multTouchEachSprite, 2);
-                        Array.Copy(customSkin.TouchBorder_Mine, NDCompo.multTouchMineSprite, 2);
-
-                        if (timing.noteList.FindAll(o => !o.isMine).Count > 1 && !NDCompo.isMine) 
-                            NDCompo.isEach = true;
-                        NDCompo.speed = touchSpeed * timing.HSpeed;
-                        NDCompo.isFirework = note.isHanabi;
-                        NDCompo.isMine = note.isMine;
-                        NDCompo.canSVAffect = note.canSVAffect;
-                    }
-
-                    if (note.noteType == SimaiNoteType.Slide)
-                        InstantiateStarGroup(timing, note, i, lastNoteTime); // 星星组
+                    pendingTimings.Add(timing);
+                    continue;
                 }
 
-                var eachNotes = timing.noteList.FindAll(o =>
-                    o.noteType != SimaiNoteType.Touch && o.noteType != SimaiNoteType.TouchHold && !o.isMine && !o.isSlideNoHead);
-                if (eachNotes.Count > 1) //有多个非touchnote
-                {
-                    var startPos = eachNotes[0].startPosition;
-                    var endPos = eachNotes[1].startPosition;
-                    endPos = endPos - startPos;
-                    if (endPos == 0) continue;
-
-                    var line = Instantiate(eachLine, notes.transform);
-                    var lineDrop = line.GetComponent<EachLineDrop>();
-
-                    lineDrop.time = (float)timing.time;
-                    lineDrop.speed = noteSpeed * timing.HSpeed;
-                    lineDrop.canSVAffect = false;
-                    foreach (var eachNote in eachNotes)
-                    {
-                        lineDrop.canSVAffect = lineDrop.canSVAffect || eachNote.canSVAffect;
-                    }
-
-                    endPos = endPos < 0 ? endPos + 8 : endPos;
-                    endPos = endPos > 8 ? endPos - 8 : endPos;
-                    endPos++;
-
-                    if (endPos > 4)
-                    {
-                        startPos = eachNotes[1].startPosition;
-                        endPos = eachNotes[0].startPosition;
-                        endPos = endPos - startPos;
-                        endPos = endPos < 0 ? endPos + 8 : endPos;
-                        endPos = endPos > 8 ? endPos - 8 : endPos;
-                        endPos++;
-                    }
-
-                    lineDrop.startPosition = startPos;
-                    lineDrop.curvLength = endPos - 1;
-                }
+                SpawnTiming(timing, lastNoteTime);
             }
             catch (Exception e)
             {
                 GameObject.Find("ErrText").GetComponent<Text>().text =
                     "在第" + (timing.rawTextPositionY + 1) + "行发现问题：\n" + e.Message;
             }
+
+        // 队列里还有多少项没生成（HasPendingNotes / All Perfect 判断用）
+        pendingRemaining = pendingTimings.Count;
     }
 
+
+    /// <summary>
+    ///     按需生成某个时间点上的全部音符。
+    ///     这段原先直接写在 LoadJson 的循环里，会把整首谱面一次性实例化；
+    ///     现在按播放进度调用，离得远的音符不生成、不占内存。
+    /// </summary>
+    private void SpawnTiming(SimaiTimingPoint timing, double lastNoteTime)
+    {
+        try
+        {
+            for (var i = 0; i < timing.noteList.Count; i++)
+            {
+                var note = timing.noteList[i];
+                if (note.noteType == SimaiNoteType.Tap)
+                {
+                    var GOnote = Instantiate(tapPrefab, notes.transform);
+                    var NDCompo = GOnote.GetComponent<TapDrop>();
+
+                    // note的图层顺序
+                    NDCompo.noteSortOrder = noteSortOrder;
+                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+
+                    if (note.isForceStar)
+                    {
+                        NDCompo.normalSpr = customSkin.Star;
+                        NDCompo.eachSpr = customSkin.Star_Each;
+                        NDCompo.breakSpr = customSkin.Star_Break;
+                        NDCompo.exSpr = customSkin.Star_Ex;
+                        NDCompo.mineSpr = customSkin.Star_Mine;
+                        NDCompo.tapLine = starLine;
+                        NDCompo.isFakeStarRotate = note.isFakeRotate;
+                    }
+                    else
+                    {
+                        //自定义note样式
+                        NDCompo.normalSpr = customSkin.Tap;
+                        NDCompo.breakSpr = customSkin.Tap_Break;
+                        NDCompo.eachSpr = customSkin.Tap_Each;
+                        NDCompo.exSpr = customSkin.Tap_Ex;
+                        NDCompo.mineSpr = customSkin.Tap_Mine;
+                    }
+
+                    NDCompo.BreakShine = BreakShine;
+
+                    if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
+                    NDCompo.isBreak = note.isBreak;
+                    NDCompo.isEX = note.isEx;
+                    NDCompo.isMine = note.isMine;
+                    NDCompo.canSVAffect = note.canSVAffect;
+                    NDCompo.time = timing.time;
+                    NDCompo.svGroup = timing.groupIndex;
+                    NDCompo.startPosition = note.startPosition;
+                    NDCompo.speed = noteSpeed * timing.HSpeed;
+                }
+
+                if (note.noteType == SimaiNoteType.Hold)
+                {
+                    var GOnote = Instantiate(holdPrefab, notes.transform);
+                    var NDCompo = GOnote.GetComponent<HoldDrop>();
+
+                    // note的图层顺序
+                    NDCompo.noteSortOrder = noteSortOrder;
+                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+
+                    NDCompo.tapSpr = customSkin.Hold;
+                    NDCompo.eachSpr = customSkin.Hold_Each;
+                    NDCompo.exSpr = customSkin.Hold_Ex;
+                    NDCompo.breakSpr = customSkin.Hold_Break;
+                    NDCompo.mineSpr = customSkin.Hold_Mine;
+
+                    NDCompo.HoldShine = HoldShine;
+                    NDCompo.BreakShine = BreakShine;
+
+                    if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
+                    NDCompo.time = timing.time;
+                    NDCompo.svGroup = timing.groupIndex;
+                    NDCompo.LastFor = (float)note.holdTime;
+                    NDCompo.startPosition = note.startPosition;
+                    NDCompo.speed = noteSpeed * timing.HSpeed;
+                    NDCompo.isEX = note.isEx;
+                    NDCompo.isBreak = note.isBreak;
+                    NDCompo.isMine = note.isMine;
+                    NDCompo.canSVAffect = note.canSVAffect;
+                }
+
+                if (note.noteType == SimaiNoteType.TouchHold)
+                {
+                    var GOnote = Instantiate(touchHoldPrefab, notes.transform);
+                    var NDCompo = GOnote.GetComponent<TouchHoldDrop>();
+
+                    // note的图层顺序
+                    NDCompo.noteSortOrder = noteSortOrder;
+                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+
+                    if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
+                        NDCompo.time = timing.time;
+                        NDCompo.svGroup = timing.groupIndex;
+                        NDCompo.LastFor = (float)note.holdTime;
+                        NDCompo.speed = touchSpeed * timing.HSpeed;
+                        NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isMine = note.isMine;
+                        // 之前漏了这两个：TouchHoldDrop 拿不到区域，GetAreaPos 一律返回原点，全部挤在 C 区
+                        NDCompo.areaPosition = note.touchArea;
+                        NDCompo.startPosition = note.startPosition;
+
+                    Array.Copy(customSkin.TouchHold, NDCompo.TouchHoldSprite, 5);
+                    Array.Copy(customSkin.TouchHold_Mine, NDCompo.TouchHoldMineSprite, 5);
+                    NDCompo.TouchPointSprite = customSkin.TouchPoint;
+                    NDCompo.TouchPointMineSprite = customSkin.TouchPoint_Mine;
+                    NDCompo.TouchPointEachSprite = customSkin.TouchPoint_Each;
+                    NDCompo.canSVAffect = note.canSVAffect;
+                }
+
+                if (note.noteType == SimaiNoteType.Touch)
+                {
+                    var GOnote = Instantiate(touchPrefab, notes.transform);
+                    var NDCompo = GOnote.GetComponent<TouchDrop>();
+
+                    // note的图层顺序
+                    NDCompo.noteSortOrder = noteSortOrder;
+                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+
+                    NDCompo.time = timing.time;
+                    NDCompo.svGroup = timing.groupIndex;
+                    NDCompo.areaPosition = note.touchArea;
+                    NDCompo.startPosition = note.startPosition;
+
+                    NDCompo.fanNormalSprite = customSkin.Touch;
+                    NDCompo.fanEachSprite = customSkin.Touch_Each;
+                    NDCompo.fanMineSprite = customSkin.Touch_Mine;
+                    NDCompo.fanBreakSprite = customSkin.Touch_Break;
+                    NDCompo.pointNormalSprite = customSkin.TouchPoint;
+                    NDCompo.pointEachSprite = customSkin.TouchPoint_Each;
+                    NDCompo.pointMineSprite = customSkin.TouchPoint_Mine;
+                    NDCompo.pointBreakSprite = customSkin.TouchPoint_Break;
+                    NDCompo.justSprite = customSkin.TouchJust;
+                    NDCompo.justBreakSprite = customSkin.TouchJust_Break;
+                    Array.Copy(customSkin.TouchBorder, NDCompo.multTouchNormalSprite, 2);
+                    Array.Copy(customSkin.TouchBorder_Each, NDCompo.multTouchEachSprite, 2);
+                    Array.Copy(customSkin.TouchBorder_Mine, NDCompo.multTouchMineSprite, 2);
+                    Array.Copy(customSkin.TouchBorder_Break, NDCompo.multTouchBreakSprite, 2);
+
+                    if (timing.noteList.FindAll(o => !o.isMine).Count > 1 && !NDCompo.isMine) 
+                        NDCompo.isEach = true;
+                        NDCompo.speed = touchSpeed * timing.HSpeed;
+                        NDCompo.isFirework = note.isHanabi;
+                        NDCompo.isMine = note.isMine;
+                        NDCompo.isBreak = note.isBreak;
+                        NDCompo.canSVAffect = note.canSVAffect;
+                }
+
+                if (note.noteType == SimaiNoteType.Slide)
+                    InstantiateStarGroup(timing, note, i, lastNoteTime); // 星星组
+            }
+
+            var eachNotes = timing.noteList.FindAll(o =>
+                o.noteType != SimaiNoteType.Touch && o.noteType != SimaiNoteType.TouchHold && !o.isMine && !o.isSlideNoHead);
+            if (eachNotes.Count > 1) //有多个非touchnote
+            {
+                var startPos = eachNotes[0].startPosition;
+                var endPos = eachNotes[1].startPosition;
+                endPos = endPos - startPos;
+                if (endPos == 0) return;
+
+                var line = Instantiate(eachLine, notes.transform);
+                var lineDrop = line.GetComponent<EachLineDrop>();
+
+                lineDrop.time = timing.time;
+                lineDrop.svGroup = timing.groupIndex;
+                lineDrop.speed = noteSpeed * timing.HSpeed;
+                lineDrop.canSVAffect = false;
+                foreach (var eachNote in eachNotes)
+                {
+                    lineDrop.canSVAffect = lineDrop.canSVAffect || eachNote.canSVAffect;
+                }
+
+                endPos = endPos < 0 ? endPos + 8 : endPos;
+                endPos = endPos > 8 ? endPos - 8 : endPos;
+                endPos++;
+
+                if (endPos > 4)
+                {
+                    startPos = eachNotes[1].startPosition;
+                    endPos = eachNotes[0].startPosition;
+                    endPos = endPos - startPos;
+                    endPos = endPos < 0 ? endPos + 8 : endPos;
+                    endPos = endPos > 8 ? endPos - 8 : endPos;
+                    endPos++;
+                }
+
+                lineDrop.startPosition = startPos;
+                lineDrop.curvLength = endPos - 1;
+            }
+        }
+        catch (Exception e)
+        {
+            GameObject.Find("ErrText").GetComponent<Text>().text =
+                "在第" + (timing.rawTextPositionY + 1) + "行发现问题：\n" + e.Message;
+        }
+    }
 
     private void CountNoteSum(Majson json)
     {
@@ -747,7 +928,8 @@ public class JsonDataLoader : MonoBehaviour
         //WifiCompo.lastSlideTime = note.lastSlideTime;
 
         NDCompo.isNoHead = note.isSlideNoHead;
-        NDCompo.time = (float)timing.time;
+        NDCompo.time = timing.time;
+        NDCompo.svGroup = timing.groupIndex;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * timing.HSpeed;
         NDCompo.canSVAffect = note.canSVAffect;
@@ -756,7 +938,8 @@ public class JsonDataLoader : MonoBehaviour
         WifiCompo.speed = noteSpeed * timing.HSpeed;
         WifiCompo.timeStart = (float)timing.time;
         WifiCompo.startPosition = note.startPosition;
-        WifiCompo.time = (float)note.slideStartTime;
+        WifiCompo.time = note.slideStartTime;
+        WifiCompo.svGroup = timing.groupIndex;
         WifiCompo.LastFor = (float)note.slideTime;
         WifiCompo.sortIndex = slideLayer;
         slideLayer += 5;
@@ -850,7 +1033,8 @@ public class JsonDataLoader : MonoBehaviour
         else if (note.isSlideBreak) slide_star.GetComponent<SpriteRenderer>().sprite = customSkin.Star_Break;
         
         NDCompo.isNoHead = note.isSlideNoHead;
-        NDCompo.time = (float)timing.time;
+        NDCompo.time = timing.time;
+        NDCompo.svGroup = timing.groupIndex;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * timing.HSpeed;
 
@@ -875,7 +1059,8 @@ public class JsonDataLoader : MonoBehaviour
         SliCompo.timeStar = (float)timing.time;
         SliCompo.startPosition = note.startPosition;
         SliCompo.star_slide = slide_star;
-        SliCompo.time = (float)note.slideStartTime;
+        SliCompo.time = note.slideStartTime;
+        SliCompo.svGroup = timing.groupIndex;
         SliCompo.LastFor = (float)note.slideTime;
         //SliCompo.sortIndex = -7000 + (int)((lastNoteTime - timing.time) * -100) + sort * 5;
         SliCompo.sortIndex = slideLayer++;

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -53,6 +53,7 @@ public class WifiDrop : NoteLongDrop
     private Vector3 SlidePositionStart;
 
     private bool startShining;
+    private bool slidingStarted; // 是否已经开始移动（防止 SV 回退时星星跳回起点）
 
     private AudioTimeProvider timeProvider;
 
@@ -126,8 +127,10 @@ public class WifiDrop : NoteLongDrop
     // Update is called once per frame
     private void Update()
     {
-        var startiming = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(timeStart);
-        var realStar = timeProvider.AudioTime - timeStart;
+        // 组内 wifi 用组曲线自己的当前位置，主谱面的 SV 不能带它
+        var startiming = (float)(timeProvider.GetScrollDistD(svGroup)
+                                 - timeProvider.GetPositionAtTimeD(timeStart, svGroup));
+        var realStar = (float)(timeProvider.AudioTime - timeStart);
         if (!canSVAffect) startiming = realStar;
         if (startiming <= 0f)
         {
@@ -163,39 +166,53 @@ public class WifiDrop : NoteLongDrop
         foreach (var star in star_slide)
             star.SetActive(true);
 
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
         
         if (!canSVAffect) timing = realtime;
+        // 只有真实时间到了才算"开始滑"，否则负 SV 把 timing 推成正数时 wifi 会提前跑到终点并锁死
+        if (realtime >= 0f) slidingStarted = true;
         if (timing <= 0f)
         {
-            float alpha;
-            if (isGroupPart)
+            // 已经滑动过的 wifi 不能因为 SV 回退而跳回起点
+            if (!slidingStarted)
             {
-                alpha = 0;
-            }
-            else
-            {
-                alpha = 1f - -timing / (time - timeStart);
-                alpha = alpha > 1f ? 1f : alpha;
-                alpha = alpha < 0.5f ? 0.5f : alpha;
-            }
+                float alpha;
+                if (isGroupPart)
+                {
+                    alpha = 0;
+                }
+                else
+                {
+                    alpha = 1f - -timing / (float)(time - timeStart); // time 是 double，这里只要渐入比例，转 float
+                    alpha = alpha > 1f ? 1f : alpha;
+                    alpha = alpha < 0.5f ? 0.5f : alpha;
+                }
 
-            for (var i = 0; i < star_slide.Length; i++)
-            {
-                spriteRenderer_star[i].color = new Color(1, 1, 1, alpha);
-                star_slide[i].transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
-                star_slide[i].transform.position = SlidePositionStart;
+                for (var i = 0; i < star_slide.Length; i++)
+                {
+                    spriteRenderer_star[i].color = new Color(1, 1, 1, alpha);
+                    star_slide[i].transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
+                    star_slide[i].transform.position = SlidePositionStart;
+                }
             }
         }
 
-        if (timing > 0f)
+        if (timing > 0f && slidingStarted)
         {
-            var process = (LastFor - timing) / LastFor;
-            process = 1f - process;
+            // timing 是"位置时间"，LastFor 是"秒"，SV≠1 时两者尺度不同。
+            // 必须像 SlideDrop 一样用 P(t+LastFor)-P(t) 归一化，否则 SV 下 wifi 星星会跑过头或走不完。
+            var lastScroll = timeProvider.GetPositionAtTime(time + LastFor, svGroup) - timeProvider.GetPositionAtTime(time, svGroup);
+            // 负 SV / SV=0 的段里 lastScroll 可能 <= 0，直接除会出 inf/NaN
+            float process;
+            if (Mathf.Abs(lastScroll) <= 0.0001f)
+                process = realtime / Mathf.Max(LastFor, 0.0001f);
+            else
+                process = timing / lastScroll;
             var realPro = (LastFor - realtime) / LastFor;
             realPro = 1f - realPro;
             if (!canSVAffect) process = realPro;
+            process = Mathf.Clamp01(process);
             if (process > 1)
             {
                 foreach (GameObject obj in slideBars)
@@ -228,7 +245,7 @@ public class WifiDrop : NoteLongDrop
             int slideAreaIndex;
             if (smoothSlideAnime)
             {
-                slideAreaIndex = (int)pos + 1;
+                slideAreaIndex = Mathf.Min((int)pos + 1, slideBars.Count);
             }
             else
             {

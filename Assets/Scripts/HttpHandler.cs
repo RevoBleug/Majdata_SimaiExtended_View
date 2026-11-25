@@ -83,7 +83,7 @@ public class HttpHandler : MonoBehaviour
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             multTouchHandler.clearSlots();
 
-            screenRecorder.CutoffTime = getChartLength();
+            screenRecorder.CutoffTime = loader.ChartLength; // 延迟生成后不能用场景里已有对象统计时长
             screenRecorder.CutoffTime += 10f;
             screenRecorder.StartRecording(maidataPath);
             timeProvider.CalcSVPos();
@@ -148,10 +148,10 @@ public class HttpHandler : MonoBehaviour
         var length = 0f;
         foreach (var noteData in GameObject.Find("Notes").GetComponentsInChildren<NoteDrop>(true))
         {
-            length = Math.Max(length, noteData.time);
+            length = Math.Max(length, (float)noteData.time);
 
             var longData = noteData as NoteLongDrop;
-            if (longData != null) length = Math.Max(length, noteData.time + longData.LastFor);
+            if (longData != null) length = Math.Max(length, (float)(noteData.time + longData.LastFor));
         }
 
         return length;

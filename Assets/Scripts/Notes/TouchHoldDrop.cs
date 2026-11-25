@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class TouchHoldDrop : NoteLongDrop
 {
@@ -8,6 +8,8 @@ public class TouchHoldDrop : NoteLongDrop
     public bool isFirework;
     public bool isMine;
     public bool isEach;
+    public char areaPosition;
+    public int startPosition;
     public bool canSVAffect;
 
     public GameObject tapEffect;
@@ -67,7 +69,7 @@ public class TouchHoldDrop : NoteLongDrop
             if(isEach) fansSprite[4].sprite = TouchPointEachSprite;
             else fansSprite[4].sprite = TouchPointSprite;
         }
-
+        transform.position = GetAreaPos(startPosition, areaPosition);
         SetfanColor(new Color(1f, 1f, 1f, 0f));
         mask.enabled = false;
     }
@@ -75,8 +77,8 @@ public class TouchHoldDrop : NoteLongDrop
     // Update is called once per frame
     private void Update()
     {
-        var timing = timeProvider.ScrollDist - time;
-        var realtime = timeProvider.AudioTime - time;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
         //var pow = Mathf.Pow(-timing * speed, 0.1f) - 0.4f;
         var pow = -Mathf.Exp(8 * (timing * 0.4f / moveDuration) - 0.85f) + 0.42f;
         var distance = Mathf.Clamp(pow, 0f, 0.4f);
@@ -88,7 +90,9 @@ public class TouchHoldDrop : NoteLongDrop
             pow = realPow; 
             distance = realDistance;
         }
-        if (timing > LastFor)
+        // 用真实时间判断结束：SV 回退时位置时间可能永远到不了 LastFor，
+        // 那样这个 touch-hold 会一直不消失、也不计数。
+        if (realtime > LastFor)
         {
             Instantiate(tapEffect, transform.position, transform.rotation);
             if(isMine) GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().mineCount++;
@@ -124,9 +128,11 @@ public class TouchHoldDrop : NoteLongDrop
 
         if (float.IsNaN(distance)) distance = 0f;
         if (distance == 0f && realDistance == 0f) holdEffect.SetActive(true);
+        // SC：位置固定在判定区不动，只让扇形的收缩行程跟着 SC 缩放（观感上收缩变慢）
+        var scaledDistance = distance * timeProvider.GetScaleFor(svGroup);
         for (var i = 0; i < 4; i++)
         {
-            var pos = (0.226f + distance) * GetAngle(i);
+            var pos = (0.226f + scaledDistance) * GetAngle(i);
             fans[i].transform.position = pos;
         }
     }
@@ -136,6 +142,45 @@ public class TouchHoldDrop : NoteLongDrop
         var angle = Mathf.PI / 4 + index * (Mathf.PI / 2);
         return new Vector3(Mathf.Sin(angle), Mathf.Cos(angle));
     }
+
+    private Vector3 GetAreaPos(int index, char area)
+    {
+        /// <summary>
+        /// AreaDistance: 
+        /// C:   0
+        /// E:   3.1
+        /// B:   2.21
+        /// A,D: 4.8
+        /// </summary>
+        if (area == 'C') return Vector3.zero;
+        if (area == 'B')
+        {
+            var angle = -index * (Mathf.PI / 4) + Mathf.PI * 5 / 8;
+            return new Vector3(Mathf.Cos(angle), Mathf.Sin(angle)) * 2.3f;
+        }
+
+        if (area == 'A')
+        {
+            var angle = -index * (Mathf.PI / 4) + Mathf.PI * 5 / 8;
+            return new Vector3(Mathf.Cos(angle), Mathf.Sin(angle)) * 4.1f;
+        }
+
+        if (area == 'E')
+        {
+            var angle = -index * (Mathf.PI / 4) + Mathf.PI * 6 / 8;
+            return new Vector3(Mathf.Cos(angle), Mathf.Sin(angle)) * 3.0f;
+        }
+
+        if (area == 'D')
+        {
+            var angle = -index * (Mathf.PI / 4) + Mathf.PI * 6 / 8;
+            return new Vector3(Mathf.Cos(angle), Mathf.Sin(angle)) * 4.1f;
+        }
+
+        return Vector3.zero;
+    }
+
+
 
     private void SetfanColor(Color color)
     {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -49,6 +49,7 @@ public class SlideDrop : NoteLongDrop
     private SpriteRenderer spriteRenderer_star;
 
     private bool startShining;
+    private bool slidingStarted; // 滑条是否已经开始移动（防止 SV 回退时星星跳回起点）
 
     private AudioTimeProvider timeProvider;
 
@@ -60,10 +61,12 @@ public class SlideDrop : NoteLongDrop
     // Update is called once per frame
     private void Update()
     {
-        var startiming = timeProvider.AudioTime - timeStar;
+        var startiming = (float)(timeProvider.AudioTime - timeStar);
         if (canSVAffect)
         {
-            startiming = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(timeStar);
+            // 组内星星用组曲线自己的当前位置，主谱面的 SV 不能带它
+            startiming = (float)(timeProvider.GetScrollDistD(svGroup)
+                                 - timeProvider.GetPositionAtTimeD(timeStar, svGroup));
         }
 
         if (startiming <= 0f)
@@ -96,42 +99,56 @@ public class SlideDrop : NoteLongDrop
 
         star_slide.SetActive(true);
 
-        var timing = timeProvider.ScrollDist - timeProvider.GetPositionAtTime(time);
-        var realtime = timeProvider.AudioTime - time;
+        var timing = timeProvider.GetTiming(time, svGroup);
+        var realtime = (float)(timeProvider.AudioTime - time);
         if (!canSVAffect)
         {
             timing = realtime;
         }
 
+        // 只有真实时间到了才算"开始滑"。否则负 SV 把 timing 推成正数时，
+        // 星星会提前跑到滑条终点，还会被 slidingStarted 锁死在那儿再也回不来。
+        if (realtime >= 0f) slidingStarted = true;
+
         if (timing <= 0f)
         {
-            float alpha;
-            if (isGroupPart)
+            // 已经滑动过的滑条，不能因为 SV 回退（timing 由正变负）而跳回起点
+            if (!slidingStarted)
             {
-                alpha = 0;
-            }
-            else
-            {
-                // 只有当它是一个起点Slide（而非Slide Group中的子部分）的时候，才会有开始的星星渐入动画
-                alpha = 1f - -timing / (time - timeStar);
-                alpha = alpha > 1f ? 1f : alpha;
-                alpha = alpha < 0.5f ? 0.5f : alpha;
-            }
+                float alpha;
+                if (isGroupPart)
+                {
+                    alpha = 0;
+                }
+                else
+                {
+                    // 只有当它是一个起点Slide（而非Slide Group中的子部分）的时候，才会有开始的星星渐入动画
+                    alpha = 1f - -timing / (float)(time - timeStar); // time 是 double，这里只要渐入比例，转 float
+                    alpha = alpha > 1f ? 1f : alpha;
+                    alpha = alpha < 0.5f ? 0.5f : alpha;
+                }
 
-            spriteRenderer_star.color = new Color(1, 1, 1, alpha);
-            star_slide.transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
-            star_slide.transform.position = slidePositions[0];
-            applyStarRotation(slideRotations[0]);
+                spriteRenderer_star.color = new Color(1, 1, 1, alpha);
+                star_slide.transform.localScale = new Vector3(alpha + 0.5f, alpha + 0.5f, alpha + 0.5f);
+                star_slide.transform.position = slidePositions[0];
+                applyStarRotation(slideRotations[0]);
+            }
         }
 
-        if (timing > 0f)
+        if (timing > 0f && slidingStarted)
         {
             spriteRenderer_star.color = Color.white;
             star_slide.transform.localScale = new Vector3(1.5f, 1.5f, 1.5f);
 
-            var lastScroll = timeProvider.GetPositionAtTime(time + LastFor) - timeProvider.GetPositionAtTime(time);
-            var process = (lastScroll - timing) / lastScroll;
-            process = 1f - process;
+            var lastScroll = timeProvider.GetPositionAtTime(time + LastFor, svGroup) - timeProvider.GetPositionAtTime(time, svGroup);
+            // 负 SV 或者 SV=0 的段里 lastScroll 可能 <= 0，直接做除法会得到 inf/NaN，
+            // 星星会瞬间消失。这种情况下退化成按真实时间走。
+            float process;
+            if (Mathf.Abs(lastScroll) <= 0.0001f)
+                process = realtime / Mathf.Max(LastFor, 0.0001f);
+            else
+                process = timing / lastScroll;
+            process = Mathf.Clamp01(process);
             var realPro = (LastFor - realtime) / LastFor;
             realPro = 1f - realPro;
             if(!canSVAffect)
@@ -172,8 +189,9 @@ public class SlideDrop : NoteLongDrop
             }
 
             //print(process);
-            var pos = (slidePositions.Count - 1) * process;
-            var index = (int)pos;
+            // process 可能因 SV 越过 1，直接索引会越界（原来靠 try/catch 吞掉，表现是星星卡在终点不动）
+            var pos = (slidePositions.Count - 1) * Mathf.Clamp01(process);
+            var index = Mathf.Clamp((int)pos, 0, slidePositions.Count - 2);
 
             // Slide的箭头消失到哪里
             int slideAreaIndex;
