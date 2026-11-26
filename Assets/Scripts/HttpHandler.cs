@@ -44,9 +44,14 @@ public class HttpHandler : MonoBehaviour
             loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
+            TapDrop.WideHollow = data.wideNoteHollow;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
-            GameObject.Find("Notes").GetComponent<PlayAllPerfect>().enabled = false;
+            // 重置 AP 判定：隐藏上一轮的画面、清掉"已播放"状态。
+            // 原来是 enabled = false 把它关掉，可之后再没打开过，AP 从此永远不放。
+            var allPerfect = GameObject.Find("Notes").GetComponent<PlayAllPerfect>();
+            allPerfect.enabled = true;
+            allPerfect.ResetForNewChart();
             GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>().clearSlots();
             timeProvider.CalcSVPos();
 
@@ -61,6 +66,7 @@ public class HttpHandler : MonoBehaviour
             loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
+            TapDrop.WideHollow = data.wideNoteHollow;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>().clearSlots();
@@ -79,6 +85,7 @@ public class HttpHandler : MonoBehaviour
             loader.noteSpeed = (float)(107.25 / (71.4184491 * Mathf.Pow(data.noteSpeed + 0.9975f, -0.985558604f)));
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
+            TapDrop.WideHollow = data.wideNoteHollow;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             multTouchHandler.clearSlots();

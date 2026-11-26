@@ -199,11 +199,9 @@ public class HoldDrop : NoteLongDrop
                 if (holdDistance < 1.225f) holdDistance = 1.225f;
                 if (!isMine) holdEffect.SetActive(true);
                 startHoldShine();
-                holdEndRender.enabled = true;
             }
             else if (holdDistance < 1.225f && distance >= 4.8f && realDistance >= 4.8f) // 头到达 尾未出现
             {
-                holdEndRender.enabled = false;
                 holdDistance = 1.225f;
                 distance = 4.8f;
                 if(!isMine) holdEffect.SetActive(true);
@@ -218,13 +216,8 @@ public class HoldDrop : NoteLongDrop
                 distance = 4.8f;
                 if (!isMine) holdEffect.SetActive(true);
                 startHoldShine();
-
-                holdEndRender.enabled = true;
             }
-            else if (holdDistance >= 1.225f && distance < 4.8f) // 头未到达 尾出现
-            {
-                holdEndRender.enabled = true;
-            }
+            // 最后一档（头未到达 尾出现）不需要额外处理：两端都按算出来的位置画
 
             // 负 SV / 回退段会让尾巴"超过"头。判定中尾巴可以跑到头的更外侧，
             // 也可以缩到判定圈内侧，都按两端实际跨度渲染；
@@ -241,6 +234,12 @@ public class HoldDrop : NoteLongDrop
             holdEndRender.transform.localPosition = new Vector3(0f, holdDistance >= distance ? tailOffset : -tailOffset);
             transform.localScale = new Vector3(1f, 1f);
         }
+
+        // 尾端标记只看"尾巴本身在不在可见范围内"：1.225 是所有下落脚本共用的音符生成边界，
+        // 尾巴比它更靠内就等于跑到屏幕外了。
+        // 以前是分散在 if/else 各分支里开关，负 SV 把尾巴推回边界外时漏掉了关闭，
+        // 于是那个点会一直浮在画面上不消失。
+        holdEndRender.enabled = holdDistance > 1.225f && distance > 1.225f;
 
         var lineScale = Mathf.Abs(distance / 4.8f);
         lineScale = lineScale >= 1f ? 1f : lineScale;

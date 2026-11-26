@@ -60,6 +60,8 @@ internal class SimaiNote
     public bool isSlideMine = false;
     public bool isSlideNoHead = false;
     public bool canSVAffect = true;
+    // 星星头单独一份：c 写在轨迹符号之前只影响头（5c-1），写在后面只影响滑条（5-1c）。
+    public bool canSVAffectHead = true;
 
     public string noteContent; //used for star explain
     public SimaiNoteType noteType;
@@ -70,6 +72,11 @@ internal class SimaiNote
 
     public int startPosition = 1; //键位（1-8）
     public char touchArea = ' ';
+
+    // 宽音符：从 startPosition 沿某个方向铺到 wideEndPosition（含两端），只有 Tap / Break 有
+    public bool isWide = false;
+    public int wideEndPosition = 0;
+    public bool isWideClockwise = false;
 }
 
 internal class EditRequestjson
@@ -84,6 +91,7 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
+    public bool wideNoteHollow = true; // 宽音符空心/实心，由 Edit 的编辑器设置下发
 }
 
 public enum EditorComboIndicator

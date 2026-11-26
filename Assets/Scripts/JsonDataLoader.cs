@@ -70,6 +70,17 @@ public class JsonDataLoader : MonoBehaviour
         {SimaiNoteType.TouchHold, 6 },
     };
 
+    // 宽音符要占 4 层：主体 / 白边 / 黑边 / 外发光。
+    // 普通 tap 只占 2 层，如果宽音符按 base、base+1、base+2 排，后两层会落进
+    // "前一个音符"的层区间里，看起来就是宽音符盖住了前面的 note。
+    private const int WIDE_NOTE_LAYERS = 4;
+
+    private static int LayerCountOf(SimaiNote note)
+    {
+        if (note.isWide) return WIDE_NOTE_LAYERS;
+        return NOTE_LAYER_COUNT.TryGetValue(note.noteType, out var c) ? c : 2;
+    }
+
     private static readonly Dictionary<string, int> SLIDE_PREFAB_MAP = new Dictionary<string, int>()
     {
         {"line3", 0 },
@@ -364,7 +375,7 @@ public class JsonDataLoader : MonoBehaviour
 
                     // note的图层顺序
                     NDCompo.noteSortOrder = noteSortOrder;
-                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+                    noteSortOrder -= LayerCountOf(note);
 
                     if (note.isForceStar)
                     {
@@ -393,6 +404,9 @@ public class JsonDataLoader : MonoBehaviour
                     NDCompo.isEX = note.isEx;
                     NDCompo.isMine = note.isMine;
                     NDCompo.canSVAffect = note.canSVAffect;
+                    NDCompo.isWide = note.isWide;
+                    NDCompo.wideEndPosition = note.wideEndPosition;
+                    NDCompo.isWideClockwise = note.isWideClockwise;
                     NDCompo.time = timing.time;
                     NDCompo.svGroup = timing.groupIndex;
                     NDCompo.startPosition = note.startPosition;
@@ -406,7 +420,7 @@ public class JsonDataLoader : MonoBehaviour
 
                     // note的图层顺序
                     NDCompo.noteSortOrder = noteSortOrder;
-                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+                    noteSortOrder -= LayerCountOf(note);
 
                     NDCompo.tapSpr = customSkin.Hold;
                     NDCompo.eachSpr = customSkin.Hold_Each;
@@ -436,7 +450,7 @@ public class JsonDataLoader : MonoBehaviour
 
                     // note的图层顺序
                     NDCompo.noteSortOrder = noteSortOrder;
-                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+                    noteSortOrder -= LayerCountOf(note);
 
                     if (timing.noteList.FindAll(o => !o.isMine).Count > 1) NDCompo.isEach = true;
                         NDCompo.time = timing.time;
@@ -464,7 +478,7 @@ public class JsonDataLoader : MonoBehaviour
 
                     // note的图层顺序
                     NDCompo.noteSortOrder = noteSortOrder;
-                    noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+                    noteSortOrder -= LayerCountOf(note);
 
                     NDCompo.time = timing.time;
                     NDCompo.svGroup = timing.groupIndex;
@@ -517,7 +531,11 @@ public class JsonDataLoader : MonoBehaviour
                 lineDrop.canSVAffect = false;
                 foreach (var eachNote in eachNotes)
                 {
-                    lineDrop.canSVAffect = lineDrop.canSVAffect || eachNote.canSVAffect;
+                    // 双押连线连的是音符头，星星要取 canSVAffectHead（5c-1 时头不跟 SV）
+                    var headFollowsSV = eachNote.noteType == SimaiNoteType.Slide
+                        ? eachNote.canSVAffectHead
+                        : eachNote.canSVAffect;
+                    lineDrop.canSVAffect = lineDrop.canSVAffect || headFollowsSV;
                 }
 
                 endPos = endPos < 0 ? endPos + 8 : endPos;
@@ -758,6 +776,8 @@ public class JsonDataLoader : MonoBehaviour
             o.isSlideMine = note.isSlideMine;
             o.isSlideNoHead = true;
             o.canSVAffect = note.canSVAffect;
+            // 星星头各自一份：5c-1 只让头不跟 SV，滑条本体照常跟
+            o.canSVAffectHead = note.canSVAffectHead;
         });
         subSlide[0].isSlideNoHead = note.isSlideNoHead;
         //double wholetime = 0;
@@ -855,7 +875,7 @@ public class JsonDataLoader : MonoBehaviour
 
         // note的图层顺序
         NDCompo.noteSortOrder = noteSortOrder;
-        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+        noteSortOrder -= LayerCountOf(note);
 
         NDCompo.tapSpr = customSkin.Star;
         NDCompo.eachSpr = customSkin.Star_Each;
@@ -932,7 +952,8 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.svGroup = timing.groupIndex;
         NDCompo.startPosition = note.startPosition;
         NDCompo.speed = noteSpeed * timing.HSpeed;
-        NDCompo.canSVAffect = note.canSVAffect;
+        // 星星头看 canSVAffectHead：5c-1 只让头不跟 SV，wifi 本体照常跟
+        NDCompo.canSVAffect = note.canSVAffectHead;
 
         WifiCompo.isJustR = detectJustType(note.noteContent);
         WifiCompo.speed = noteSpeed * timing.HSpeed;
@@ -952,7 +973,7 @@ public class JsonDataLoader : MonoBehaviour
 
         // note的图层顺序
         NDCompo.noteSortOrder = noteSortOrder;
-        noteSortOrder -= NOTE_LAYER_COUNT[note.noteType];
+        noteSortOrder -= LayerCountOf(note);
 
         NDCompo.tapSpr = customSkin.Star;
         NDCompo.eachSpr = customSkin.Star_Each;
@@ -972,7 +993,8 @@ public class JsonDataLoader : MonoBehaviour
         NDCompo.isEX = note.isEx;
         NDCompo.isBreak = note.isBreak;
         NDCompo.isMine = note.isMine;
-        NDCompo.canSVAffect = note.canSVAffect;
+        // 星星头看 canSVAffectHead：5c-1 只让头不跟 SV，滑条本体照常跟
+        NDCompo.canSVAffect = note.canSVAffectHead;
 
         string slideShape = detectShapeFromText(note.noteContent);
         var isMirror = false;

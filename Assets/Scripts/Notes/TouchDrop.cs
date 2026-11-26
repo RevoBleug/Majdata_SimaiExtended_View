@@ -116,13 +116,16 @@ public class TouchDrop : NoteDrop
     {
         var timing = timeProvider.GetTiming(time, svGroup);
         var realtime = (float)(timeProvider.AudioTime - time);
-        var fakeMove = timeProvider.GetPositionAtTime(time + moveDuration, svGroup) - timeProvider.GetPositionAtTime(time, svGroup);
-        // SV 为 0 的段落会让 fakeMove 变成 0，后面除法会得到 Infinity/NaN，touch 直接不显示。
-        if (fakeMove <= 0.0001f) fakeMove = moveDuration;
 
         //var timing = time;
         //var pow = Mathf.Pow(-timing * speed, 0.1f)-0.4f;
-        var pow = -Mathf.Exp(8 * (timing * 0.4f / fakeMove) - 0.85f) + 0.42f;
+        // 扇叶张合是位置 x（= timing，判定时刻为 0）的函数，只由 x 决定。
+        // 分母必须是 touch 的整个可见跨度 wholeDuration，不能用 moveDuration：
+        // moveDuration 只有 0.8×wholeDuration，x 落在 [-wholeDuration, -moveDuration]
+        // 这一段时已经被 clamp 到最大，前段就是一段完全水平的"张开不动"。
+        // 用 wholeDuration 后，整个可见范围内 f(x) 单调，四个 C 的 x 完全相同，
+        // 所以它们必然完全同步、完全一致地重复三次。
+        var pow = -Mathf.Exp(8 * (timing * 0.4f / wholeDuration) - 0.85f) + 0.42f;
         var realPow = -Mathf.Exp(8 * (realtime * 0.4f / moveDuration) - 0.85f) + 0.42f;
         var distance = Mathf.Clamp(pow, 0f, 0.4f);
         var realDistance = Mathf.Clamp(realPow, 0f, 0.4f);
@@ -180,6 +183,9 @@ public class TouchDrop : NoteDrop
         }
 
         if (float.IsNaN(distance)) distance = 0f;
+        // 判定之后不再跟着 SV 摆动：判定瞬间 SV 往回走的话，扇叶会又被推开，
+        // 但那 0.05 秒里已经算打过了，保持合拢更干净。
+        if (realtime > 0f) distance = 0f;
         // SC：touch 的位置固定在判定区、不跟着缩放，但"收缩"的行程要跟 SC 走——
         // 缩放变小时扇形张开的幅度也跟着变小，观感上就是收缩变慢。
         var scaledDistance = distance * timeProvider.GetScaleFor(svGroup);

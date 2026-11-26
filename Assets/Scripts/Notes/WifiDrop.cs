@@ -55,6 +55,11 @@ public class WifiDrop : NoteLongDrop
     private bool startShining;
     private bool slidingStarted; // 是否已经开始移动（防止 SV 回退时星星跳回起点）
 
+    /// <summary>判定条的存活时间（秒）。原来亮完没人销毁，会永久堆在 Notes 下面。</summary>
+    private const float JudgementBarLifetime = 1.5f;
+
+    private bool slideOkScheduled;
+
     private AudioTimeProvider timeProvider;
 
     private void Start()
@@ -212,8 +217,12 @@ public class WifiDrop : NoteLongDrop
             var realPro = (LastFor - realtime) / LastFor;
             realPro = 1f - realPro;
             if (!canSVAffect) process = realPro;
+            var processRaw = process;
             process = Mathf.Clamp01(process);
-            if (process > 1)
+            // 这里原来是 if (process > 1)，但上一行 Clamp01 已经把上界钳到 1，条件永远不成立：
+            // wifi 走到终点既不亮判定、也不销毁，星星就停在终点不动。
+            // 用钳制前的值判断，并用真实时间比例兜底（SV 把位置进度压住时靠它收尾）。
+            if (processRaw >= 1f || realPro >= 1f)
             {
                 foreach (GameObject obj in slideBars)
                 {
@@ -230,7 +239,14 @@ public class WifiDrop : NoteLongDrop
                         else
                             GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().slideCount++;
                     }
-                    slideOK.SetActive(true);
+                    // 判定条原来亮完没人销毁，会永久留在 Notes 下面（All Perfect 的判定也因此永远不成立）。
+                    // 只在第一次亮起时排一次销毁：每帧都调 Destroy(obj, t) 会把计时一直重置，永远不销毁。
+                    if (slideOK != null && !slideOkScheduled)
+                    {
+                        slideOkScheduled = true;
+                        slideOK.SetActive(true);
+                        Destroy(slideOK, JudgementBarLifetime);
+                    }
                 }
                 if (realPro > 1)
                 {

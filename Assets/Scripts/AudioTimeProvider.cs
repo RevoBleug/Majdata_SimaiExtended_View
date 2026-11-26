@@ -384,7 +384,46 @@ public class AudioTimeProvider : MonoBehaviour
             curve.Calc();
         }
 
-        UnityEngine.Debug.Log($"SV segments: {MainCurve.SVTime.Count}, groups: {groupCurves.Count}");
+        // 诊断：播放开始时 Console 里打一次。
+        // 主曲线只打前几条；每条 <GR> 组曲线单独打——组内音符走的是组曲线，
+        // 组曲线没数据的话，组里的 touch 会退化成"匀速滚动"，四个 C 位置差固定
+        // → 扇叶全部张到最大、完全重叠、而且一直不动。
+        var sb = new System.Text.StringBuilder();
+        var probe = Math.Min(4, MainCurve.SVList.Count);
+        for (var i = 0; i < probe; i++)
+        {
+            var hasStart = i < MainCurve.SVHasStart.Count && MainCurve.SVHasStart[i];
+            var start = i < MainCurve.SVStartVal.Count ? MainCurve.SVStartVal[i] : 0f;
+            sb.Append("\n  [").Append(i).Append("] t=").Append(MainCurve.SVTime[i].ToString("F3"))
+              .Append(" v=").Append(MainCurve.SVList[i].ToString("F2"))
+              .Append(" trans=").Append(MainCurve.SVTrans[i].ToString("F3"))
+              .Append(" hasStart=").Append(hasStart)
+              .Append(" start=").Append(start.ToString("F2"));
+        }
+
+        foreach (var pair in groupCurves)
+        {
+            var c = pair.Value;
+            sb.Append("\n<GR:").Append(pair.Key).Append("> segs=").Append(c.SVList.Count)
+              .Append(" startT=").Append(c.startT.ToString("F3"))
+              .Append(" explicit=").Append(c.hasExplicitStart)
+              .Append(" startSV=").Append(c.startSV.ToString("F2"))
+              .Append(" startPos=").Append(c.startPos.ToString("F3"));
+
+            var gp = Math.Min(8, c.SVList.Count);
+            for (var i = 0; i < gp; i++)
+            {
+                var hasStart = i < c.SVHasStart.Count && c.SVHasStart[i];
+                var start = i < c.SVStartVal.Count ? c.SVStartVal[i] : 0f;
+                sb.Append("\n    g[").Append(i).Append("] t=").Append(c.SVTime[i].ToString("F3"))
+                  .Append(" v=").Append(c.SVList[i].ToString("F2"))
+                  .Append(" trans=").Append(c.SVTrans[i].ToString("F3"))
+                  .Append(" hasStart=").Append(hasStart)
+                  .Append(" start=").Append(start.ToString("F2"));
+            }
+        }
+
+        UnityEngine.Debug.Log($"SV segments: {MainCurve.SVTime.Count}, groups: {groupCurves.Count}{sb}");
     }
 
     public float GetPositionAtTime(double audioT)

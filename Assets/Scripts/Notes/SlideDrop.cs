@@ -25,6 +25,11 @@ public class SlideDrop : NoteLongDrop
     public GameObject slideOK;
     public bool isGroupPartEnd;
 
+    /// <summary>判定条的存活时间（秒）。原来亮完没人销毁，会永久堆在 Notes 下面。</summary>
+    private const float JudgementBarLifetime = 1.5f;
+
+    private bool slideOkScheduled;
+
     // public float time;
     public float timeStar;
 
@@ -174,7 +179,14 @@ public class SlideDrop : NoteLongDrop
                         else
                             GameObject.Find("ObjectCounter").GetComponent<ObjectCounter>().slideCount++;
                     }
-                    if(!isMine) slideOK.SetActive(true);
+                    // 判定条原来亮完就没人管了，会永久留在 Notes 下面（All Perfect 的判定也因此永远不成立）。
+                    // 只在第一次亮起时排一次销毁：每帧都调 Destroy(obj, t) 会把计时一直重置，永远不销毁。
+                    if (!isMine && slideOK != null && !slideOkScheduled)
+                    {
+                        slideOkScheduled = true;
+                        slideOK.SetActive(true);
+                        Destroy(slideOK, JudgementBarLifetime);
+                    }
                 }
                 else
                 {
