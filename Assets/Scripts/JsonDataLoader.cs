@@ -75,9 +75,14 @@ public class JsonDataLoader : MonoBehaviour
     // "前一个音符"的层区间里，看起来就是宽音符盖住了前面的 note。
     private const int WIDE_NOTE_LAYERS = 4;
 
+    // 宽 hold 占 5 层：头环 3（主体/白/黑）+ ex 外发光 1 + 中间那条半透明色带 1。
+    // 尾巴不用宽环（只让色带延伸过去），所以不再单列。
+    private const int WIDE_HOLD_LAYERS = 5;
+
     private static int LayerCountOf(SimaiNote note)
     {
-        if (note.isWide) return WIDE_NOTE_LAYERS;
+        if (note.isWide)
+            return note.noteType == SimaiNoteType.Hold ? WIDE_HOLD_LAYERS : WIDE_NOTE_LAYERS;
         return NOTE_LAYER_COUNT.TryGetValue(note.noteType, out var c) ? c : 2;
     }
 
@@ -441,6 +446,9 @@ public class JsonDataLoader : MonoBehaviour
                     NDCompo.isBreak = note.isBreak;
                     NDCompo.isMine = note.isMine;
                     NDCompo.canSVAffect = note.canSVAffect;
+                    NDCompo.isWide = note.isWide;
+                    NDCompo.wideEndPosition = note.wideEndPosition;
+                    NDCompo.isWideClockwise = note.isWideClockwise;
                 }
 
                 if (note.noteType == SimaiNoteType.TouchHold)

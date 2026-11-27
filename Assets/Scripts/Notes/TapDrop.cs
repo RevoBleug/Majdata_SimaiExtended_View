@@ -39,15 +39,14 @@ public class TapDrop : NoteDrop
     private const float WideLineWidth = 0.16f;     // 主体线宽（空心时是描边，实心时是整条带的厚度基准）
     private const float WideWhiteExtra = 0.04f;    // 白边单边宽度
     private const float WideBlackExtra = 0.045f;   // 黑边单边宽度
-    private const float WideGlowExtra = 0.20f;     // 发光从轮廓外缘向外延伸的宽度
+    private const float WideGlowExtra = 0.13f;     // 发光从轮廓外缘向外延伸的宽度
 
     /// <summary>
     ///     宽音符是不是空心。true = 双线轮廓（外弧 + 内弧 + 两端半圆），false = 一条填充带。
-    ///     默认空心，由 Edit 的编辑器设置「宽音符空心轮廓」下发覆盖。
+    ///     默认实心，由 Edit 的编辑器设置「宽音符空心轮廓」下发覆盖。
     /// </summary>
-    public static bool WideHollow = true;
+    public static bool WideHollow = false;
 
-    private static readonly Color WideWhiteColor = Color.white;
     private static readonly Color WideBlackColor = new Color(0.06f, 0.06f, 0.09f, 1f);
 
     // 每帧重建的顶点缓冲。用 List + 复用数组，避免 ToArray 每帧分配。
@@ -67,8 +66,8 @@ public class TapDrop : NoteDrop
     private readonly List<Color> glowCols = new(2048);
     private readonly List<int> glowTris = new(4096);
     private Mesh wideGlowMesh;
-    // 发光沿宽度的衰减档位：贴本体最亮，越往外越淡，最后一档全透明。
-    private static readonly float[] GlowAlphaStops = { 1f, 0.72f, 0.40f, 0f };
+    // 发光沿宽度的衰减档位：贴本体最亮，第二档就掉到 45%，衰减要快、边界要窄。
+    private static readonly float[] GlowAlphaStops = { 1f, 0.50f, 0.20f, 0f };
 
     private Color wideBodyA = Color.white;
     private Color wideBodyB = Color.white;
@@ -314,42 +313,44 @@ public class TapDrop : NoteDrop
         return wideGlowMat != null ? wideGlowMat : wideGlowMat = MakeWideMaterial(true);
     }
 
-    /// <summary>颜色照 tap 系列贴图取：普通粉、each 黄、break 橙、mine 灰、ex 淡紫外圈。</summary>
+    /// <summary>
+    ///     颜色直接取贴图里的两层主色（tap 系列是"外浅内深"两层，中间夹白边）：
+    ///     tap 254,126,214 → 255,20,120；each 255,255,0 → 255,181,0；
+    ///     break 255,203,1 → 255,52,19。中间的取插值。
+    /// </summary>
     private void ResolveWideColors()
     {
         if (isMine)
         {
             wideBodyA = wideBodyB = new Color(0.62f, 0.62f, 0.62f);
-            wideGlowColor = new Color(0.86f, 0.86f, 0.86f);
-            wideGlowAlpha = 0.18f;
         }
         else if (isBreak)
         {
-            wideBodyA = new Color(1f, 0.28f, 0.04f);
-            wideBodyB = new Color(1f, 0.72f, 0.02f);
-            wideGlowColor = new Color(1f, 0.72f, 0.34f);
-            wideGlowAlpha = 0.38f;
+            wideBodyA = new Color(1f, 0.80f, 0.00f);
+            wideBodyB = new Color(1f, 0.20f, 0.08f);
         }
         else if (isEach)
         {
-            wideBodyA = new Color(1f, 0.90f, 0.06f);
-            wideBodyB = new Color(1f, 0.66f, 0.02f);
-            wideGlowColor = new Color(1f, 0.90f, 0.46f);
-            wideGlowAlpha = 0.32f;
+            // each 是纯黄，别往橙偏
+            wideBodyA = new Color(1f, 1f, 0f);
+            wideBodyB = new Color(1f, 0.71f, 0f);
         }
         else
         {
-            wideBodyA = new Color(1f, 0.32f, 0.68f);
-            wideBodyB = new Color(0.94f, 0.10f, 0.47f);
-            wideGlowColor = new Color(1f, 0.64f, 0.87f);
-            wideGlowAlpha = 0.32f;
+            wideBodyA = new Color(1f, 0.49f, 0.84f);
+            wideBodyB = new Color(1f, 0.08f, 0.47f);
         }
 
-        if (isEX)
+        // ex 那圈"保护套"不是纯白。普通 note 的 ex 是一层半透明淡紫白贴在主色上，
+        // 视觉上透出它自己的颜色；宽音符的发光是加法叠在外面的，用纯白就只剩一圈死白。
+        // 所以取主色往白提亮，粉的就是粉白、黄的就是黄白。
+        var body = Color.Lerp(wideBodyA, wideBodyB, 0.5f);
+        wideGlowColor = Color.Lerp(body, Color.white, 0.55f);
+        wideGlowAlpha = isEX ? 0.85f : 0.32f;
+        if (isMine)
         {
-            // ex 的外圈换成淡紫白、更亮更宽，和 tap_ex 的观感一致
-            wideGlowColor = Color.Lerp(new Color(0.86f, 0.82f, 1f), Color.white, 0.35f);
-            wideGlowAlpha = 0.90f;
+            wideGlowColor = new Color(0.86f, 0.86f, 0.86f);
+            wideGlowAlpha = 0.18f;
         }
     }
 
@@ -388,7 +389,7 @@ public class TapDrop : NoteDrop
         wideLine.SetPropertyBlock(wideMpb);
         if (wideLineB != null) wideLineB.SetPropertyBlock(wideMpb);
 
-        wideMpb.SetColor(WideColorId, WideWhiteColor);
+        wideMpb.SetColor(WideColorId, Color.white);
         if (wideWhite != null) wideWhite.SetPropertyBlock(wideMpb);
         if (wideWhiteB != null) wideWhiteB.SetPropertyBlock(wideMpb);
 
@@ -593,10 +594,14 @@ public class TapDrop : NoteDrop
             }
 
             // 发光的起点。
-            // 空心时轮廓路径是"描边线的中心线"，要再推半个线宽才到轮廓外缘；
-            // 实心时发光路径本身已经按 half 生成成带子的边缘了，再推一次就会浮在
-            // 带子外面一段距离，看起来就是"边框大了一圈"。
-            var edge = filled ? 0f : wBlack * 0.5f;
+            // 发光必须从"最外层可见边缘"起算，否则会被上面几层盖住：
+            //   空心：轮廓点是描边中心线，推半个黑边宽才到外缘；
+            //   实心：轮廓点已经在带子边缘，但白边/黑边比主体还宽出一截，
+            //         推 0 的话整条发光都埋在黑边里（宽度 0.13 小于黑边外扩的 0.085×2），
+            //         画面上就是"实心完全没有 ex 光"。
+            var edge = filled
+                ? (WideWhiteExtra + WideBlackExtra) * kw
+                : wBlack * 0.5f;
             var gw = WideGlowExtra * kw;
             AppendGlow(gPtsA, gNrmA, edge, gw, gLoopA, 1f);
             AppendGlow(gPtsB, gNrmB, edge, gw, gLoopB, 1f);

@@ -45,6 +45,8 @@ public class HttpHandler : MonoBehaviour
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
             TapDrop.WideHollow = data.wideNoteHollow;
+            // 旧版 Edit 不下发这个字段，会是 0；0 等于色带完全看不见，兜回默认值
+            HoldDrop.WideBandAlpha = data.wideBandAlpha > 0.01f ? data.wideBandAlpha : 0.35f;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             // 重置 AP 判定：隐藏上一轮的画面、清掉"已播放"状态。
@@ -67,6 +69,8 @@ public class HttpHandler : MonoBehaviour
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
             TapDrop.WideHollow = data.wideNoteHollow;
+            // 旧版 Edit 不下发这个字段，会是 0；0 等于色带完全看不见，兜回默认值
+            HoldDrop.WideBandAlpha = data.wideBandAlpha > 0.01f ? data.wideBandAlpha : 0.35f;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             GameObject.Find("MultTouchHandler").GetComponent<MultTouchHandler>().clearSlots();
@@ -86,6 +90,8 @@ public class HttpHandler : MonoBehaviour
             loader.touchSpeed = data.touchSpeed;
             loader.smoothSlideAnime = data.smoothSlideAnime;
             TapDrop.WideHollow = data.wideNoteHollow;
+            // 旧版 Edit 不下发这个字段，会是 0；0 等于色带完全看不见，兜回默认值
+            HoldDrop.WideBandAlpha = data.wideBandAlpha > 0.01f ? data.wideBandAlpha : 0.35f;
             objectCounter.ComboSetActive(data.comboStatusType);
             loader.LoadJson(File.ReadAllText(data.jsonPath), data.startTime);
             multTouchHandler.clearSlots();

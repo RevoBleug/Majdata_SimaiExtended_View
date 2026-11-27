@@ -91,7 +91,8 @@ internal class EditRequestjson
     public float startTime;
     public float touchSpeed;
     public bool smoothSlideAnime;
-    public bool wideNoteHollow = true; // 宽音符空心/实心，由 Edit 的编辑器设置下发
+    public bool wideNoteHollow = false; // 宽音符空心/实心，由 Edit 的编辑器设置下发
+    public float wideBandAlpha = 0.35f; // 宽音符 hold 中间色带的透明度，由 Edit 的编辑器设置下发
 }
 
 public enum EditorComboIndicator
